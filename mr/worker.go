@@ -70,11 +70,11 @@ func (w *worker) run() {
 func (w *worker) handleMapJob(job *MapJob) {
 	file, err := os.Open(job.Filename)
 	if err != nil {
-		log.Fatalf("cannot open %v", job.Filename)
+		log.Fatalf("Open(%v): %v", job.Filename, err)
 	}
 	content, err := ioutil.ReadAll(file)
 	if err != nil {
-		log.Fatalf("cannot read %v", job.Filename)
+		log.Fatalf("Read(%v): %v", job.Filename, err)
 	}
 	file.Close()
 	kva := w.mapf(job.Filename, string(content))
@@ -90,25 +90,25 @@ func (w *worker) handleMapJob(job *MapJob) {
 		filename := mapFileName(job.MapID, reduceID)
 		file, err := ioutil.TempFile("", filename)
 		if err != nil {
-			log.Fatalf("cannot create %v", filename)
+			log.Fatalf("TempFile(%v): %v", filename, err)
 		}
 
 		enc := json.NewEncoder(file)
 		for _, kv := range partition {
 			err := enc.Encode(&kv)
 			if err != nil {
-				log.Fatalf("json encoding failed %v", err)
+				log.Fatalf("Encode(): %v", err)
 			}
-		}
-
-		err = os.Rename(file.Name(), filename)
-		if err != nil {
-			log.Fatalf("rename failed: %v", err)
 		}
 
 		err = file.Close()
 		if err != nil {
-			log.Fatalf("cannot close %v", err)
+			log.Fatalf("Close(%v): %v", filename, err)
+		}
+
+		err = os.Rename(file.Name(), filename)
+		if err != nil {
+			log.Fatalf("Rename(%v): %v", filename, err)
 		}
 	}
 
@@ -131,7 +131,7 @@ func (w *worker) handleReduceJob(job *ReduceJob) {
 		filename := mapFileName(mapID, job.ReduceID)
 		file, err := os.Open(filename)
 		if err != nil {
-			log.Fatalf("cannot open %v", filename)
+			log.Fatalf("Open(%v): %v", filename, err)
 		}
 
 		dec := json.NewDecoder(file)
@@ -144,7 +144,7 @@ func (w *worker) handleReduceJob(job *ReduceJob) {
 		}
 		err = file.Close()
 		if err != nil {
-			log.Fatalf("cannot close %v", err)
+			log.Fatalf("Close(%v): %v", filename, err)
 		}
 	}
 
@@ -153,7 +153,7 @@ func (w *worker) handleReduceJob(job *ReduceJob) {
 	outputFilename := fmt.Sprintf("mr-out-%d", job.ReduceID)
 	ofile, err := ioutil.TempFile("", outputFilename)
 	if err != nil {
-		log.Fatalf("Cannot create file %v: %v", outputFilename, err)
+		log.Fatalf("Create(%v): %v", outputFilename, err)
 	}
 
 	i := 0
@@ -174,14 +174,14 @@ func (w *worker) handleReduceJob(job *ReduceJob) {
 		i = j
 	}
 
-	err = os.Rename(ofile.Name(), outputFilename)
-	if err != nil {
-		log.Fatalf("rename failed: %v", err)
-	}
-
 	err = ofile.Close()
 	if err != nil {
-		log.Fatalf("cannot close %v", err)
+		log.Fatalf("Close(%v): %v", outputFilename, err)
+	}
+
+	err = os.Rename(ofile.Name(), outputFilename)
+	if err != nil {
+		log.Fatalf("Rename(%v): %v", outputFilename, err)
 	}
 
 	err = w.conn.Call("ReduceComplete", &ReduceComplete{ID: job.ReduceID}, &CompleteAck{})
