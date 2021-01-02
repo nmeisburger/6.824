@@ -1,12 +1,14 @@
 package mr
 
-import "log"
-import "net"
-import "os"
-import "net/rpc"
-import "net/http"
+import (
+	"log"
+	"net"
+	"net/http"
+	"net/rpc"
+	"os"
+)
 
-
+// Master contains logic for master server
 type Master struct {
 	// Your definitions here.
 
@@ -14,16 +16,12 @@ type Master struct {
 
 // Your code here -- RPC handlers for the worker to call.
 
-//
-// an example RPC handler.
-//
+// Example is an example RPC handler.
 // the RPC argument and reply types are defined in rpc.go.
-//
 func (m *Master) Example(args *ExampleArgs, reply *ExampleReply) error {
 	reply.Y = args.X + 1
 	return nil
 }
-
 
 //
 // start a thread that listens for RPCs from worker.go
@@ -41,29 +39,23 @@ func (m *Master) server() {
 	go http.Serve(l, nil)
 }
 
-//
-// main/mrmaster.go calls Done() periodically to find out
+// Done - main/mrmaster.go calls Done() periodically to find out
 // if the entire job has finished.
-//
 func (m *Master) Done() bool {
-	ret := false
+	ret := true
 
 	// Your code here.
-
 
 	return ret
 }
 
-//
-// create a Master.
+// MakeMaster - create a Master.
 // main/mrmaster.go calls this function.
 // nReduce is the number of reduce tasks to use.
-//
 func MakeMaster(files []string, nReduce int) *Master {
 	m := Master{}
 
 	// Your code here.
-
 
 	m.server()
 	return &m

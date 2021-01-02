@@ -10,3 +10,7 @@ mrtmp.*
 /pbservice/x.txt
 /kvpaxos/x.txt
 *.so
+
+cmd/mr/master/mrmaster
+cmd/mr/sequential/mrsequential
+cmd/mr/worker/mrworker

@@ -1,14 +1,14 @@
 package mr
 
-import "fmt"
-import "log"
-import "net/rpc"
-import "hash/fnv"
+import (
+	"fmt"
+	"hash/fnv"
+	"log"
+	"net/rpc"
+)
 
-
-//
+// KeyValue Stores intermediate result for worker
 // Map functions return a slice of KeyValue.
-//
 type KeyValue struct {
 	Key   string
 	Value string
@@ -24,10 +24,7 @@ func ihash(key string) int {
 	return int(h.Sum32() & 0x7fffffff)
 }
 
-
-//
-// main/mrworker.go calls this function.
-//
+// Worker  main/mrworker.go calls this function.
 func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
 
@@ -38,11 +35,8 @@ func Worker(mapf func(string, string) []KeyValue,
 
 }
 
-//
-// example function to show how to make an RPC call to the master.
-//
+// CallExample - example function to show how to make an RPC call to the master.
 // the RPC argument and reply types are defined in rpc.go.
-//
 func CallExample() {
 
 	// declare an argument structure.

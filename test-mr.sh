@@ -6,19 +6,19 @@
 
 RACE=
 
-DATA_PATH="data/"
-ALL_DATA="data/*.txt"
+DATA_PATH="../data/"
+ALL_DATA="../data/*.txt"
 # Paths to tests
-WC="cmd/mrapps/wc/"
-INDEXER="cmd/mrapps/indexer/"
-MTIMING="cmd/mrapps/mtiming/"
-RTIMING="cmd/mrapps/rtiming/"
-CRASH="cmd/mrapps/crash/"
-NOCRASH="cmd/mrapps/nocrash/"
+WC="../cmd/mrapps/wc"
+INDEXER="../cmd/mrapps/indexer/"
+MTIMING="../cmd/mrapps/mtiming/"
+RTIMING="../cmd/mrapps/rtiming/"
+CRASH="../cmd/mrapps/crash/"
+NOCRASH="../cmd/mrapps/nocrash/"
 
-MASTER="cmd/mr/master/"
-WORKER="cmd/mr/worker/"
-SEQUENTIAL="cmd/mr/sequential/"
+MASTER="../cmd/mr/master/"
+WORKER="../cmd/mr/worker/"
+SEQUENTIAL="../cmd/mr/sequential/"
 
 # uncomment this to run the tests with the Go race detector.
 #RACE=-race
@@ -30,37 +30,37 @@ cd mr-tmp || exit 1
 rm -f mr-*
 
 # make sure software is freshly built.
-(cd WC && go build $RACE -buildmode=plugin wc.go) || exit 1
-(cd INDEXER && go build $RACE -buildmode=plugin indexer.go) || exit 1
-(cd MTIMING && go build $RACE -buildmode=plugin mtiming.go) || exit 1
-(cd RTIMING && go build $RACE -buildmode=plugin rtiming.go) || exit 1
-(cd CRASH && go build $RACE -buildmode=plugin crash.go) || exit 1
-(cd NOCRASH && go build $RACE -buildmode=plugin nocrash.go) || exit 1
+(cd $WC && go build $RACE -buildmode=plugin wc.go) || exit 1
+(cd $INDEXER && go build $RACE -buildmode=plugin indexer.go) || exit 1
+(cd $MTIMING && go build $RACE -buildmode=plugin mtiming.go) || exit 1
+(cd $RTIMING && go build $RACE -buildmode=plugin rtiming.go) || exit 1
+(cd $CRASH && go build $RACE -buildmode=plugin crash.go) || exit 1
+(cd $NOCRASH && go build $RACE -buildmode=plugin nocrash.go) || exit 1
 
-(cd MASTER && go build $RACE mrmaster.go) || exit 1
-(cd WORKER && go build $RACE mrworker.go) || exit 1
-(cd SEQUENTIAL && go build $RACE mrsequential.go) || exit 1
+(cd $MASTER && go build $RACE mrmaster.go) || exit 1
+(cd $WORKER && go build $RACE mrworker.go) || exit 1
+(cd $SEQUENTIAL && go build $RACE mrsequential.go) || exit 1
 
 failed_any=0
 
 # first word-count
 
 # generate the correct output
-SEQUENTIAL/mrsequential WC/wc.so ALL_DATA || exit 1
+$SEQUENTIAL/mrsequential $WC/wc.so $ALL_DATA || exit 1
 sort mr-out-0 > mr-correct-wc.txt
 rm -f mr-out*
 
 echo '***' Starting wc test.
 
-timeout -k 2s 180s MASTER/mrmaster ALL_DATA &
+timeout -k 2s 180s $MASTER/mrmaster ALL_DATA &
 
 # give the master time to create the sockets.
 sleep 1
 
 # start multiple workers.
-timeout -k 2s 180s WORKER/mrworker WC/wc.so &
-timeout -k 2s 180s WORKER/mrworker WC/wc.so &
-timeout -k 2s 180s WORKER/mrworker WC/wc.so &
+timeout -k 2s 180s $WORKER/mrworker $WC/wc.so &
+timeout -k 2s 180s $WORKER/mrworker $WC/wc.so &
+timeout -k 2s 180s $WORKER/mrworker $WC/wc.so &
 
 # wait for one of the processes to exit.
 # under bash, this waits for all processes,
@@ -88,18 +88,18 @@ wait ; wait ; wait
 rm -f mr-*
 
 # generate the correct output
-SEQUENTIAL/mrsequential INDEXER/indexer.so ALL_DATA || exit 1
+$SEQUENTIAL/mrsequential $INDEXER/indexer.so $ALL_DATA || exit 1
 sort mr-out-0 > mr-correct-indexer.txt
 rm -f mr-out*
 
 echo '***' Starting indexer test.
 
-timeout -k 2s 180s MASTER/mrmaster ALL_DATA &
+timeout -k 2s 180s $MASTER/mrmaster $ALL_DATA &
 sleep 1
 
 # start multiple workers
-timeout -k 2s 180s WORKER/mrworker INDEXER/indexer.so &
-timeout -k 2s 180s WORKER/mrworker INDEXER/indexer.so
+timeout -k 2s 180s $WORKER/mrworker $INDEXER/indexer.so &
+timeout -k 2s 180s $WORKER/mrworker $INDEXER/indexer.so
 
 sort mr-out* | grep . > mr-indexer-all
 if cmp mr-indexer-all mr-correct-indexer.txt
@@ -118,11 +118,11 @@ echo '***' Starting map parallelism test.
 
 rm -f mr-out* mr-worker*
 
-timeout -k 2s 180s MASTER/mrmaster ALL_DATA &
+timeout -k 2s 180s $MASTER/mrmaster $ALL_DATA &
 sleep 1
 
-timeout -k 2s 180s WORKER/mrworker MTIMING/mtiming.so &
-timeout -k 2s 180s WORKER/mrworker MTIMING/mtiming.so
+timeout -k 2s 180s $WORKER/mrworker $MTIMING/mtiming.so &
+timeout -k 2s 180s $WORKER/mrworker $MTIMING/mtiming.so
 
 NT=`cat mr-out* | grep '^times-' | wc -l | sed 's/ //g'`
 if [ "$NT" != "2" ]
@@ -148,11 +148,11 @@ echo '***' Starting reduce parallelism test.
 
 rm -f mr-out* mr-worker*
 
-timeout -k 2s 180s MASTER/mrmaster ALL_DATA &
+timeout -k 2s 180s $MASTER/mrmaster $ALL_DATA &
 sleep 1
 
-timeout -k 2s 180s WORKER/mrworker RTIMING/rtiming.so &
-timeout -k 2s 180s WORKER/mrworker RTIMING/rtiming.so
+timeout -k 2s 180s $WORKER/mrworker $RTIMING/rtiming.so &
+timeout -k 2s 180s $WORKER/mrworker $RTIMING/rtiming.so
 
 NT=`cat mr-out* | grep '^[a-z] 2' | wc -l | sed 's/ //g'`
 if [ "$NT" -lt "2" ]
@@ -168,37 +168,37 @@ wait ; wait
 
 
 # generate the correct output
-SEQUENTIAL/mrsequential NOCRASH/nocrash.so ALL_DATA || exit 1
+$SEQUENTIAL/mrsequential $NOCRASH/nocrash.so $ALL_DATA || exit 1
 sort mr-out-0 > mr-correct-crash.txt
 rm -f mr-out*
 
 echo '***' Starting crash test.
 
 rm -f mr-done
-(timeout -k 2s 180s MASTER/mrmaster ALL_DATA ; touch mr-done ) &
+(timeout -k 2s 180s $MASTER/mrmaster $ALL_DATA ; touch mr-done ) &
 sleep 1
 
 # start multiple workers
-timeout -k 2s 180s WORKER/mrworker CRASH/crash.so &
+timeout -k 2s 180s $WORKER/mrworker $CRASH/crash.so &
 
 # mimic rpc.go's masterSock()
 SOCKNAME=/var/tmp/824-mr-`id -u`
 
 ( while [ -e $SOCKNAME -a ! -f mr-done ]
   do
-    timeout -k 2s 180s WORKER/mrworker CRASH/crash.so
+    timeout -k 2s 180s $WORKER/mrworker $CRASH/crash.so
     sleep 1
   done ) &
 
 ( while [ -e $SOCKNAME -a ! -f mr-done ]
   do
-    timeout -k 2s 180s WORKER/mrworker CRASH/crash.so
+    timeout -k 2s 180s $WORKER/mrworker $CRASH/crash.so
     sleep 1
   done ) &
 
 while [ -e $SOCKNAME -a ! -f mr-done ]
 do
-  timeout -k 2s 180s WORKER/mrworker CRASH/crash.so
+  timeout -k 2s 180s $WORKER/mrworker $CRASH/crash.so
   sleep 1
 done
 
