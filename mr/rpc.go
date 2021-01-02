@@ -26,6 +26,37 @@ type ExampleReply struct {
 	Y int
 }
 
+// JobRequest is sent to get a new job
+type JobRequest struct{}
+
+// MapJob represents the info for a map job
+type MapJob struct {
+	NoneRemaining bool
+	Filename      string
+	MapID         int
+	NReduce       int
+}
+
+// ReduceJob represents the info for a reduce job
+type ReduceJob struct {
+	NoneRemaining bool
+	ReduceID      int
+	NMap          int
+}
+
+// MapComplete is sent to indicate that a map job has completed
+type MapComplete struct {
+	ID int
+}
+
+// ReduceComplete is sent to indicate that a reduce job has completed
+type ReduceComplete struct {
+	ID int
+}
+
+// CompleteAck acknowledges receipt of a complete message
+type CompleteAck struct{}
+
 // Add your RPC definitions here.
 
 // Cook up a unique-ish UNIX-domain socket name
