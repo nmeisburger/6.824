@@ -45,3 +45,22 @@ LABS=" lab1 lab2a lab2b lab2c lab3a lab3b lab4a lab4b "
 check-%:
 	@echo "Checking that your submission builds correctly..."
 	@./.check-build git://g.csail.mit.edu/6.824-golabs-2020 $(patsubst check-%,%,$@)
+
+.PHONY: mr
+mr:
+	go build ./cmd/mr/worker/mrworker.go
+	go build ./cmd/mr/master/mrmaster.go
+	go build -buildmode=plugin ./cmd/mrapps/wc/wc.go
+	go build -buildmode=plugin ./cmd/mrapps/crash/crash.go
+	go build -buildmode=plugin ./cmd/mrapps/nocrash/nocrash.go
+
+
+.PHONY: clean
+clean:
+	rm map-*
+	rm mr-out-*
+	rm mrworker
+	rm mrmaster
+	rm wc.so
+
+

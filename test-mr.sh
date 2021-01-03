@@ -6,8 +6,7 @@
 
 RACE=
 
-DATA_PATH="../data/"
-ALL_DATA="../data/*.txt"
+ALL_DATA="../data/pg*.txt"
 # Paths to tests
 WC="../cmd/mrapps/wc"
 INDEXER="../cmd/mrapps/indexer/"
@@ -52,7 +51,7 @@ rm -f mr-out*
 
 echo '***' Starting wc test.
 
-timeout -k 2s 180s $MASTER/mrmaster ALL_DATA &
+timeout -k 2s 180s $MASTER/mrmaster $ALL_DATA &
 
 # give the master time to create the sockets.
 sleep 1

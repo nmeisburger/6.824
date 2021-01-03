@@ -26,26 +26,26 @@ const (
 type MapJobEntry struct {
 	status    JobStatus
 	startTime time.Time
-	mapJob    *MapJob
+	mapJob    MapJob
 }
 
 // ReduceJobEntry stores a job and its status
 type ReduceJobEntry struct {
 	status    JobStatus
 	startTime time.Time
-	reduceJob *ReduceJob
+	reduceJob ReduceJob
 }
 
 // Master contains logic for master server
 type Master struct {
 	// Your definitions here.
 	sync.RWMutex
-	mapJobs          []MapJobEntry
+	mapJobs          []*MapJobEntry
 	nMap             int
 	mapRemaining     int
 	mapPhaseComplete bool
 
-	reduceJobs      []ReduceJobEntry
+	reduceJobs      []*ReduceJobEntry
 	nReduce         int
 	reduceRemaining int
 }
@@ -56,23 +56,23 @@ type Master struct {
 func MakeMaster(files []string, nReduce int) *Master {
 	nMap := len(files)
 	m := Master{
-		mapJobs:          make([]MapJobEntry, 0, nMap),
+		mapJobs:          make([]*MapJobEntry, 0, nMap),
 		nMap:             nMap,
 		mapRemaining:     nMap,
 		mapPhaseComplete: false,
-		reduceJobs:       make([]ReduceJobEntry, 0, nReduce),
+		reduceJobs:       make([]*ReduceJobEntry, 0, nReduce),
 		nReduce:          nReduce,
 		reduceRemaining:  nReduce,
 	}
 
 	for i, f := range files {
 		j := MapJob{NoneRemaining: false, Filename: f, MapID: i, NReduce: nReduce}
-		m.mapJobs = append(m.mapJobs, MapJobEntry{status: Queued, mapJob: &j})
+		m.mapJobs = append(m.mapJobs, &MapJobEntry{status: Queued, mapJob: j})
 	}
 
 	for i := 0; i < nReduce; i++ {
 		j := ReduceJob{NoneRemaining: false, ReduceID: i, NMap: nMap}
-		m.reduceJobs = append(m.reduceJobs, ReduceJobEntry{status: Queued, reduceJob: &j})
+		m.reduceJobs = append(m.reduceJobs, &ReduceJobEntry{status: Queued, reduceJob: j})
 	}
 
 	m.server()
@@ -100,12 +100,13 @@ func (m *Master) GetMapJob(req *JobRequest, job *MapJob) error {
 
 		m.Lock()
 		for _, j := range m.mapJobs {
-			if j.status == Queued {
-				*job = *j.mapJob
-				return nil
-			} else if j.status == InProgress && time.Now().After(j.startTime.Add(10*time.Second)) {
-				*job = *j.mapJob
+			readyQueued := j.status == Queued
+			workerFailed := j.status == InProgress && time.Now().After(j.startTime.Add(10*time.Second))
+			if readyQueued || workerFailed {
+				*job = j.mapJob
+				j.status = InProgress
 				j.startTime = time.Now()
+				m.Unlock()
 				return nil
 			}
 		}
@@ -124,16 +125,19 @@ func (m *Master) GetReduceJob(req *JobRequest, job *ReduceJob) error {
 			return nil
 		}
 
+		m.Lock()
 		for _, j := range m.reduceJobs {
-			if j.status == Queued {
-				*job = *j.reduceJob
-				return nil
-			} else if j.status == InProgress && time.Now().After(j.startTime.Add(10*time.Second)) {
-				*job = *j.reduceJob
+			readyQueued := j.status == Queued
+			workerFailed := j.status == InProgress && time.Now().After(j.startTime.Add(10*time.Second))
+			if readyQueued || workerFailed {
+				*job = j.reduceJob
+				j.status = InProgress
 				j.startTime = time.Now()
+				m.Unlock()
 				return nil
 			}
 		}
+		m.Unlock()
 
 		time.Sleep(time.Second)
 	}
@@ -144,8 +148,14 @@ func (m *Master) MapComplete(job *MapComplete, res *CompleteAck) error {
 	m.Lock()
 	defer m.Unlock()
 
-	m.mapJobs[job.ID].status = Completed
-	m.mapRemaining--
+	if m.mapJobs[job.ID].status != Completed {
+		m.mapJobs[job.ID].status = Completed
+		m.mapRemaining--
+	}
+
+	if m.mapRemaining == 0 {
+		m.mapPhaseComplete = true
+	}
 
 	return nil
 }
@@ -155,8 +165,10 @@ func (m *Master) ReduceComplete(job *ReduceComplete, res *CompleteAck) error {
 	m.Lock()
 	defer m.Unlock()
 
-	m.reduceJobs[job.ID].status = Completed
-	m.reduceRemaining--
+	if m.reduceJobs[job.ID].status != Completed {
+		m.reduceJobs[job.ID].status = Completed
+		m.reduceRemaining--
+	}
 
 	return nil
 }

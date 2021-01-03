@@ -34,17 +34,19 @@ func maybeCrash() {
 	}
 }
 
+// Map maps
 func Map(filename string, contents string) []mr.KeyValue {
 	maybeCrash()
 
 	kva := []mr.KeyValue{}
-	kva = append(kva, mr.KeyValue{"a", filename})
-	kva = append(kva, mr.KeyValue{"b", strconv.Itoa(len(filename))})
-	kva = append(kva, mr.KeyValue{"c", strconv.Itoa(len(contents))})
-	kva = append(kva, mr.KeyValue{"d", "xyzzy"})
+	kva = append(kva, mr.KeyValue{Key: "a", Value: filename})
+	kva = append(kva, mr.KeyValue{Key: "b", Value: strconv.Itoa(len(filename))})
+	kva = append(kva, mr.KeyValue{Key: "c", Value: strconv.Itoa(len(contents))})
+	kva = append(kva, mr.KeyValue{Key: "d", Value: "xyzzy"})
 	return kva
 }
 
+// Reduce reduces
 func Reduce(key string, values []string) string {
 	maybeCrash()
 

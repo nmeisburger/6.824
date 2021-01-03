@@ -43,7 +43,7 @@ type worker struct {
 func (w *worker) run() {
 	for {
 		mapJob := MapJob{}
-		err := w.conn.Call("GetMapJob", &JobRequest{}, &mapJob)
+		err := w.conn.Call("Master.GetMapJob", &JobRequest{}, &mapJob)
 		if err != nil {
 			log.Println("GetMapJob(): ", err)
 			continue
@@ -56,7 +56,7 @@ func (w *worker) run() {
 
 	for {
 		reduceJob := ReduceJob{}
-		err := w.conn.Call("GetReduceJob", &JobRequest{}, &reduceJob)
+		err := w.conn.Call("Master.GetReduceJob", &JobRequest{}, &reduceJob)
 		if err != nil {
 			log.Println("GetReduceJob(): ", err)
 		}
@@ -112,7 +112,7 @@ func (w *worker) handleMapJob(job *MapJob) {
 		}
 	}
 
-	err = w.conn.Call("MapComplete", &MapComplete{ID: job.MapID}, &CompleteAck{})
+	err = w.conn.Call("Master.MapComplete", &MapComplete{ID: job.MapID}, &CompleteAck{})
 	if err != nil {
 		log.Println("MapComplete(): ", err)
 	}
@@ -184,7 +184,7 @@ func (w *worker) handleReduceJob(job *ReduceJob) {
 		log.Fatalf("Rename(%v): %v", outputFilename, err)
 	}
 
-	err = w.conn.Call("ReduceComplete", &ReduceComplete{ID: job.ReduceID}, &CompleteAck{})
+	err = w.conn.Call("Master.ReduceComplete", &ReduceComplete{ID: job.ReduceID}, &CompleteAck{})
 	if err != nil {
 		log.Println("ReduceComplete(): ", err)
 	}
@@ -209,6 +209,9 @@ func Worker(mapf MapF, reducef ReduceF) {
 	}
 	defer c.Close()
 
+	worker := worker{mapf: mapf, reducef: reducef, conn: c}
+
+	worker.run()
 }
 
 // CallExample - example function to show how to make an RPC call to the master.
