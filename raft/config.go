@@ -8,17 +8,21 @@ package raft
 // test with the original before submitting.
 //
 
-import "../labrpc"
-import "log"
-import "sync"
-import "testing"
-import "runtime"
-import "math/rand"
-import crand "crypto/rand"
-import "math/big"
-import "encoding/base64"
-import "time"
-import "fmt"
+import (
+	"log"
+	"math/rand"
+	"runtime"
+	"sync"
+	"testing"
+
+	"../labrpc"
+
+	crand "crypto/rand"
+	"encoding/base64"
+	"fmt"
+	"math/big"
+	"time"
+)
 
 func randstring(n int) string {
 	b := make([]byte, 2*n)
@@ -55,10 +59,10 @@ type config struct {
 	maxIndex0 int
 }
 
-var ncpu_once sync.Once
+var ncpuOnce sync.Once
 
-func make_config(t *testing.T, n int, unreliable bool) *config {
-	ncpu_once.Do(func() {
+func makeConfig(t *testing.T, n int, unreliable bool) *config {
+	ncpuOnce.Do(func() {
 		if runtime.NumCPU() < 2 {
 			fmt.Printf("warning: only one CPU, which may conceal locking bugs\n")
 		}
@@ -168,7 +172,7 @@ func (cfg *config) start1(i int) {
 	applyCh := make(chan ApplyMsg)
 	go func() {
 		for m := range applyCh {
-			err_msg := ""
+			errMsg := ""
 			if m.CommandValid == false {
 				// ignore other types of ApplyMsg
 			} else {
@@ -177,7 +181,7 @@ func (cfg *config) start1(i int) {
 				for j := 0; j < len(cfg.logs); j++ {
 					if old, oldok := cfg.logs[j][m.CommandIndex]; oldok && old != v {
 						// some server has already committed a different value for this entry!
-						err_msg = fmt.Sprintf("commit index=%v server=%v %v != server=%v %v",
+						errMsg = fmt.Sprintf("commit index=%v server=%v %v != server=%v %v",
 							m.CommandIndex, i, m.Command, j, old)
 					}
 				}
@@ -189,13 +193,13 @@ func (cfg *config) start1(i int) {
 				cfg.mu.Unlock()
 
 				if m.CommandIndex > 1 && prevok == false {
-					err_msg = fmt.Sprintf("server %v apply out of order %v", i, m.CommandIndex)
+					errMsg = fmt.Sprintf("server %v apply out of order %v", i, m.CommandIndex)
 				}
 			}
 
-			if err_msg != "" {
-				log.Fatalf("apply error: %v\n", err_msg)
-				cfg.applyErr[i] = err_msg
+			if errMsg != "" {
+				log.Fatalf("apply error: %v\n", errMsg)
+				cfg.applyErr[i] = errMsg
 				// keep reading after error so that Raft doesn't block
 				// holding locks...
 			}
@@ -351,8 +355,8 @@ func (cfg *config) checkTerms() int {
 func (cfg *config) checkNoLeader() {
 	for i := 0; i < cfg.n; i++ {
 		if cfg.connected[i] {
-			_, is_leader := cfg.rafts[i].GetState()
-			if is_leader {
+			_, isLeader := cfg.rafts[i].GetState()
+			if isLeader {
 				cfg.t.Fatalf("expected no leader, but %v claims to be leader", i)
 			}
 		}
@@ -377,7 +381,7 @@ func (cfg *config) nCommitted(index int) (int, interface{}) {
 				cfg.t.Fatalf("committed values do not match: index %v, %v, %v\n",
 					index, cmd, cmd1)
 			}
-			count += 1
+			count++
 			cmd = cmd1
 		}
 	}

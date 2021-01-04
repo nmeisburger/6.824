@@ -11,16 +11,19 @@ package raft
 
 import "sync"
 
+// Persister persists
 type Persister struct {
 	mu        sync.Mutex
 	raftstate []byte
 	snapshot  []byte
 }
 
+// MakePersister creates a pesister
 func MakePersister() *Persister {
 	return &Persister{}
 }
 
+// Copy copies a persister
 func (ps *Persister) Copy() *Persister {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
@@ -30,25 +33,28 @@ func (ps *Persister) Copy() *Persister {
 	return np
 }
 
+// SaveRaftState saves the state
 func (ps *Persister) SaveRaftState(state []byte) {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
 	ps.raftstate = state
 }
 
+// ReadRaftState reads the state
 func (ps *Persister) ReadRaftState() []byte {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
 	return ps.raftstate
 }
 
+// RaftStateSize gets the size
 func (ps *Persister) RaftStateSize() int {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
 	return len(ps.raftstate)
 }
 
-// Save both Raft state and K/V snapshot as a single atomic action,
+// SaveStateAndSnapshot - Save both Raft state and K/V snapshot as a single atomic action,
 // to help avoid them getting out of sync.
 func (ps *Persister) SaveStateAndSnapshot(state []byte, snapshot []byte) {
 	ps.mu.Lock()
@@ -57,12 +63,14 @@ func (ps *Persister) SaveStateAndSnapshot(state []byte, snapshot []byte) {
 	ps.snapshot = snapshot
 }
 
+// ReadSnapshot reads the snapshot
 func (ps *Persister) ReadSnapshot() []byte {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
 	return ps.snapshot
 }
 
+// SnapshotSize determines the size of the snapshot
 func (ps *Persister) SnapshotSize() int {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
