@@ -18,11 +18,15 @@ package raft
 //
 
 import (
+	"context"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"../labrpc"
 )
+
+const heardbeatDelay time.Duration = time.Second
 
 // import "bytes"
 // import "../labgob"
@@ -44,6 +48,25 @@ type ApplyMsg struct {
 	CommandIndex int
 }
 
+// LogEntry is the entries of the log
+type LogEntry struct {
+	Command interface{}
+	term    int
+	index   int
+}
+
+// State is used to represent the current state of the node
+type State uint8
+
+const (
+	// Follower represents follower state
+	Follower State = iota
+	// Candidate represents candidate state
+	Candidate
+	// Leader represents the leader state
+	Leader
+)
+
 // Raft -
 // A Go object implementing a single Raft peer.
 //
@@ -58,8 +81,20 @@ type Raft struct {
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
 
-	currentTerm int
-	votedFor    int
+	currentTerm     int
+	votedFor        int
+	log             []LogEntry
+	currState       State
+	electionTimeout time.Duration
+	nextTimeout     time.Time
+
+	commitIndex int
+	lastApplied int
+
+	// For leader only
+	nextIndex       []int
+	matchIndex      []int
+	stopLeaderTasks chan struct{}
 }
 
 // GetState returns the currentTerm and whether this server believes it is the leader.
@@ -109,21 +144,222 @@ func (rf *Raft) readPersist(data []byte) {
 	// }
 }
 
+// AppendEntriesArgs is the arguments for the append entries RPC
+type AppendEntriesArgs struct {
+	Term         int
+	LeaderID     int
+	PrevLogIndex int
+	PrevLogTerm  int
+	Entries      []interface{}
+	LeaderCommit int
+}
+
+// AppendEntriesReply is the reply for the append entries RPC
+type AppendEntriesReply struct {
+	Term    int
+	Success bool
+}
+
+// AppendEntries is the append entries RPC
+func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
+	rf.checkTerm(args.Term)
+
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	rf.nextTimeout = rf.nextTimeout.Add(rf.electionTimeout)
+}
+
 // RequestVoteArgs - example RequestVote RPC arguments structure.
 // field names must start with capital letters!
 type RequestVoteArgs struct {
-	// Your data here (2A, 2B).
+	Term         int
+	CandidateID  int
+	LastLogIndex int
+	LastLogTerm  int
 }
 
 // RequestVoteReply - example RequestVote RPC reply structure.
 // field names must start with capital letters!
 type RequestVoteReply struct {
-	// Your data here (2A).
+	CurrTerm    int
+	VoteGranted bool
 }
 
 // RequestVote - example RequestVote RPC handler.
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
-	// Your code here (2A, 2B).
+	rf.checkTerm(args.Term)
+
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	termInvalid := args.Term < rf.currentTerm
+	logInvalid := args.LastLogIndex != rf.lastLogIndex() || args.LastLogTerm != rf.lastLogTerm()
+	alreadyVoted := rf.votedFor != -1 && rf.votedFor != args.CandidateID
+	if termInvalid || logInvalid || alreadyVoted {
+		reply.CurrTerm = rf.currentTerm
+		reply.VoteGranted = false
+		return
+	}
+
+	rf.votedFor = args.CandidateID
+	reply.VoteGranted = true
+}
+
+func (rf *Raft) monitorElectionTimeout() {
+	for {
+		if rf.killed() {
+			return
+		}
+
+		rf.mu.Lock()
+		timeout := rf.nextTimeout
+		rf.mu.Unlock()
+
+		if time.Now().After(timeout) {
+			go rf.startElection()
+		}
+		time.Sleep(rf.electionTimeout)
+	}
+}
+
+func (rf *Raft) startElection() {
+	rf.mu.Lock()
+	rf.currState = Candidate
+	rf.currentTerm++
+	rf.votedFor = rf.me
+
+	votes := 1
+	received := 1
+	majority := len(rf.peers) / 2
+
+	responses := make(chan *RequestVoteReply, len(rf.peers))
+
+	req := RequestVoteArgs{
+		Term:         rf.currentTerm,
+		CandidateID:  rf.me,
+		LastLogIndex: rf.log[rf.commitIndex-1].index,
+		LastLogTerm:  rf.log[rf.commitIndex-1].term,
+	}
+
+	rf.mu.Unlock()
+
+	for i := range rf.peers {
+		if i == rf.me {
+			continue
+		}
+		j := i
+		go func() {
+			var reply RequestVoteReply
+			ok := rf.peers[j].Call("Raft.RequestVote", &req, &reply)
+			if ok {
+				if rf.checkTerm(reply.CurrTerm) {
+					return
+				}
+				responses <- &reply
+			}
+		}()
+	}
+
+	context, cancel := context.WithTimeout(context.Background(), rf.electionTimeout)
+
+WaitForVotes:
+	for {
+		select {
+		case <-context.Done():
+			cancel()
+			return
+		case resp := <-responses:
+			if resp.VoteGranted {
+				votes++
+			}
+			received++
+			if received >= len(rf.peers) || votes > majority {
+				break WaitForVotes
+			}
+		}
+	}
+	cancel()
+
+	if votes > majority {
+		rf.becomeLeader()
+	}
+}
+
+func (rf *Raft) becomeLeader() {
+	rf.mu.Lock()
+	rf.currState = Leader
+	rf.stopLeaderTasks = make(chan struct{})
+	rf.mu.Unlock()
+
+	rf.startHeartbeats()
+}
+
+func (rf *Raft) startHeartbeats() {
+	rf.mu.Lock()
+	args := &AppendEntriesArgs{
+		Term:         rf.currentTerm,
+		LeaderID:     rf.me,
+		PrevLogTerm:  rf.lastLogTerm(),
+		PrevLogIndex: rf.lastLogIndex(),
+	}
+	rf.mu.Unlock()
+
+	for i := range rf.peers {
+		if i == rf.me {
+			continue
+		}
+		j := i
+		go func() {
+			for {
+				if rf.killed() {
+					return
+				}
+				select {
+				case <-rf.stopLeaderTasks:
+					return
+				default:
+					reply := AppendEntriesReply{}
+					ok := rf.peers[j].Call("Raft.AppendEntries", args, &reply)
+					if ok {
+						rf.checkTerm(reply.Term)
+					}
+					time.Sleep(heardbeatDelay)
+				}
+			}
+		}()
+	}
+}
+
+func (rf *Raft) checkTerm(newTerm int) bool {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	outdated := rf.currentTerm < newTerm
+	if outdated {
+		rf.currState = Follower
+		rf.votedFor = -1
+		if rf.stopLeaderTasks != nil {
+			close(rf.stopLeaderTasks)
+			rf.stopLeaderTasks = nil
+		}
+	}
+	return outdated
+}
+
+func (rf *Raft) lastLogTerm() int {
+	return rf.log[len(rf.log)-1].term
+}
+
+func (rf *Raft) lastLogIndex() int {
+	return rf.log[len(rf.log)-1].index
+}
+
+func (rf *Raft) setCurrentState(s State) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	rf.currState = s
 }
 
 //
