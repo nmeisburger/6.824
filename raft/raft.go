@@ -2,6 +2,7 @@ package raft
 
 import (
 	"context"
+	"log"
 	"math/rand"
 	"sync"
 	"sync/atomic"
@@ -219,6 +220,10 @@ func (rf *Raft) monitorElectionTimeout() {
 
 		if time.Now().After(timeout) {
 			go rf.startElection()
+
+			rf.mu.Lock()
+			rf.nextTimeout = rf.nextTimeout.Add(rf.electionTimeout)
+			rf.mu.Unlock()
 		}
 		time.Sleep(rf.electionTimeout)
 	}
@@ -243,6 +248,8 @@ func (rf *Raft) startElection() {
 		LastLogTerm:  rf.lastLogTerm(),
 	}
 
+	log.Printf("Node %d: started election: %v", rf.me, req)
+
 	rf.mu.Unlock()
 
 	for i := range rf.peers {
@@ -254,6 +261,7 @@ func (rf *Raft) startElection() {
 			var reply RequestVoteReply
 			ok := rf.peers[j].Call("Raft.RequestVote", &req, &reply)
 			if ok {
+				log.Printf("Node %d: received vote response from %d: %v", rf.me, j, reply)
 				if rf.checkTerm(reply.CurrTerm) {
 					return
 				}
@@ -333,11 +341,13 @@ func (rf *Raft) startHeartbeats() {
 }
 
 func (rf *Raft) checkTerm(newTerm int) bool {
+
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
 	outdated := rf.currentTerm < newTerm
 	if outdated {
+		rf.currentTerm = newTerm
 		rf.currState = Follower
 		rf.votedFor = -1
 		if rf.stopLeaderTasks != nil {
@@ -462,6 +472,8 @@ func (rf *Raft) killed() bool {
 // for any long-running work.
 func Make(peers []*labrpc.ClientEnd, me int,
 	persister *Persister, applyCh chan ApplyMsg) *Raft {
+
+	log.Println("Hello ", me)
 
 	timeout := minElectionTimeout + time.Duration((rand.Int()%4000))*time.Millisecond
 	rf := &Raft{
