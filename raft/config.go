@@ -1,5 +1,20 @@
 package raft
 
+import (
+	crand "crypto/rand"
+	"encoding/base64"
+	"fmt"
+	"log"
+	"math/big"
+	"math/rand"
+	"runtime"
+	"sync"
+	"testing"
+	"time"
+
+	labrpc "6.824/labrpc"
+)
+
 //
 // support for Raft tester.
 //
@@ -7,22 +22,6 @@ package raft
 // so, while you can modify this code to help you debug, please
 // test with the original before submitting.
 //
-
-import (
-	"log"
-	"math/rand"
-	"runtime"
-	"sync"
-	"testing"
-
-	"../labrpc"
-
-	crand "crypto/rand"
-	"encoding/base64"
-	"fmt"
-	"math/big"
-	"time"
-)
 
 func randstring(n int) string {
 	b := make([]byte, 2*n)

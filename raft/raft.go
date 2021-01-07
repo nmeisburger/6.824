@@ -1,5 +1,15 @@
 package raft
 
+import (
+	"context"
+	"math/rand"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	labrpc "6.824/labrpc"
+)
+
 //
 // this is an outline of the API that raft must expose to
 // the service (or tester). see comments below for
@@ -17,16 +27,8 @@ package raft
 //   in the same server.
 //
 
-import (
-	"context"
-	"sync"
-	"sync/atomic"
-	"time"
-
-	"../labrpc"
-)
-
 const heardbeatDelay time.Duration = time.Second
+const minElectionTimeout time.Duration = 2 * time.Second
 
 // import "bytes"
 // import "../labgob"
@@ -99,11 +101,10 @@ type Raft struct {
 
 // GetState returns the currentTerm and whether this server believes it is the leader.
 func (rf *Raft) GetState() (int, bool) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
 
-	var term int
-	var isleader bool
-	// Your code here (2A).
-	return term, isleader
+	return rf.currentTerm, rf.currState == Leader
 }
 
 //
@@ -238,8 +239,8 @@ func (rf *Raft) startElection() {
 	req := RequestVoteArgs{
 		Term:         rf.currentTerm,
 		CandidateID:  rf.me,
-		LastLogIndex: rf.log[rf.commitIndex-1].index,
-		LastLogTerm:  rf.log[rf.commitIndex-1].term,
+		LastLogIndex: rf.lastLogIndex(),
+		LastLogTerm:  rf.lastLogTerm(),
 	}
 
 	rf.mu.Unlock()
@@ -348,10 +349,16 @@ func (rf *Raft) checkTerm(newTerm int) bool {
 }
 
 func (rf *Raft) lastLogTerm() int {
+	if len(rf.log) < 1 {
+		return 0
+	}
 	return rf.log[len(rf.log)-1].term
 }
 
 func (rf *Raft) lastLogIndex() int {
+	if len(rf.log) < 1 {
+		return 0
+	}
 	return rf.log[len(rf.log)-1].index
 }
 
@@ -430,6 +437,13 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 func (rf *Raft) Kill() {
 	atomic.StoreInt32(&rf.dead, 1)
 	// Your code here, if desired.
+
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	if rf.stopLeaderTasks != nil {
+		close(rf.stopLeaderTasks)
+		rf.stopLeaderTasks = nil
+	}
 }
 
 func (rf *Raft) killed() bool {
@@ -448,15 +462,31 @@ func (rf *Raft) killed() bool {
 // for any long-running work.
 func Make(peers []*labrpc.ClientEnd, me int,
 	persister *Persister, applyCh chan ApplyMsg) *Raft {
-	rf := &Raft{}
-	rf.peers = peers
-	rf.persister = persister
-	rf.me = me
+
+	timeout := minElectionTimeout + time.Duration((rand.Int()%4000))*time.Millisecond
+	rf := &Raft{
+		peers:           peers,
+		persister:       persister,
+		me:              me,
+		dead:            0,
+		currentTerm:     0,
+		votedFor:        -1,
+		log:             make([]LogEntry, 0, 1000),
+		currState:       Follower,
+		electionTimeout: timeout,
+		nextTimeout:     time.Now().Add(timeout),
+		commitIndex:     0,
+		lastApplied:     0,
+
+		stopLeaderTasks: make(chan struct{}),
+	}
 
 	// Your initialization code here (2A, 2B, 2C).
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
+
+	go rf.monitorElectionTimeout()
 
 	return rf
 }
