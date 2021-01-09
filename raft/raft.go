@@ -11,6 +11,10 @@ import (
 	labrpc "6.824/labrpc"
 )
 
+// TODO: for part 2B
+// 1. check for matches to update commit index when leader
+// 2. Followers: check for updates to commit index and apply messages
+
 //
 // this is an outline of the API that raft must expose to
 // the service (or tester). see comments below for
@@ -30,9 +34,6 @@ import (
 
 const heardbeatDelay time.Duration = time.Second
 const minElectionTimeout time.Duration = 2 * time.Second
-
-// import "bytes"
-// import "../labgob"
 
 // ApplyMsg -
 // as each Raft peer becomes aware that successive log entries are
@@ -54,8 +55,8 @@ type ApplyMsg struct {
 // LogEntry is the entries of the log
 type LogEntry struct {
 	Command interface{}
-	term    int
-	index   int
+	Term    int
+	// index   int
 }
 
 // State is used to represent the current state of the node
@@ -162,12 +163,50 @@ type AppendEntriesReply struct {
 	Success bool
 }
 
+func min(x, y int) int {
+	if x <= y {
+		return x
+	}
+	return y
+}
+
 // AppendEntries is the append entries RPC
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
-	rf.checkTerm(args.Term)
-
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+
+	rf.checkTerm(args.Term)
+	reply.Term = rf.currentTerm
+
+	if args.Term < rf.currentTerm {
+		reply.Success = false
+		return
+	}
+
+	logMatches := rf.log[args.PrevLogIndex-1].Term == args.PrevLogTerm
+	if !logMatches {
+		reply.Success = false
+		return
+	}
+
+	for i := args.PrevLogIndex; i < len(rf.log); i++ {
+		if rf.log[i].Term != args.Term {
+			rf.log = rf.log[:i]
+			break
+		}
+	}
+
+	for i, c := range args.Entries {
+		if i+args.PrevLogIndex < len(rf.log) {
+			rf.log[i+args.PrevLogIndex].Command = c
+		} else {
+			rf.log = append(rf.log, LogEntry{Command: c, Term: args.Term})
+		}
+	}
+
+	if rf.commitIndex < args.LeaderCommit {
+		rf.commitIndex = min(args.LeaderCommit, len(rf.log))
+	}
 
 	rf.nextTimeout = rf.nextTimeout.Add(rf.electionTimeout)
 }
@@ -190,13 +229,13 @@ type RequestVoteReply struct {
 
 // RequestVote - example RequestVote RPC handler.
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
-	rf.checkTerm(args.Term)
-
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
+	rf.checkTerm(args.Term)
+
 	termInvalid := args.Term < rf.currentTerm
-	logInvalid := args.LastLogIndex != rf.lastLogIndex() || args.LastLogTerm != rf.lastLogTerm()
+	logInvalid := args.LastLogIndex < rf.lastLogIndex() || args.LastLogTerm < rf.lastLogTerm()
 	alreadyVoted := rf.votedFor != -1 && rf.votedFor != args.CandidateID
 	if termInvalid || logInvalid || alreadyVoted {
 		reply.CurrTerm = rf.currentTerm
@@ -262,7 +301,7 @@ func (rf *Raft) startElection() {
 			ok := rf.peers[j].Call("Raft.RequestVote", &req, &reply)
 			if ok {
 				log.Printf("Node %d: received vote response from %d: %v", rf.me, j, reply)
-				if rf.checkTerm(reply.CurrTerm) {
+				if rf.checkTermLocking(reply.CurrTerm) {
 					return
 				}
 				responses <- &reply
@@ -286,6 +325,8 @@ WaitForVotes:
 			if received >= len(rf.peers) || votes > majority {
 				break WaitForVotes
 			}
+		default:
+			time.Sleep(10 * time.Millisecond)
 		}
 	}
 	cancel()
@@ -299,6 +340,12 @@ func (rf *Raft) becomeLeader() {
 	rf.mu.Lock()
 	rf.currState = Leader
 	rf.stopLeaderTasks = make(chan struct{})
+
+	for i := 0; i < len(rf.peers); i++ {
+		rf.nextIndex[i] = rf.lastLogIndex() + 1
+		rf.matchIndex[i] = 0
+	}
+
 	rf.mu.Unlock()
 
 	rf.startHeartbeats()
@@ -331,7 +378,9 @@ func (rf *Raft) startHeartbeats() {
 					reply := AppendEntriesReply{}
 					ok := rf.peers[j].Call("Raft.AppendEntries", args, &reply)
 					if ok {
-						rf.checkTerm(reply.Term)
+						if rf.checkTermLocking(reply.Term) {
+							return
+						}
 					}
 					time.Sleep(heardbeatDelay)
 				}
@@ -340,11 +389,57 @@ func (rf *Raft) startHeartbeats() {
 	}
 }
 
-func (rf *Raft) checkTerm(newTerm int) bool {
+func (rf *Raft) updateFollower(follower int) {
+Retry:
+	rf.mu.Lock()
+
+	next := rf.nextIndex[follower]
+
+	req := AppendEntriesArgs{
+		Term:         rf.currentTerm,
+		LeaderID:     rf.me,
+		PrevLogIndex: next - 1,
+		PrevLogTerm:  rf.log[next-1].Term,
+		LeaderCommit: rf.commitIndex,
+	}
+
+	for i := next; i < len(rf.log); i++ {
+		req.Entries = append(req.Entries, rf.log[i-1].Command)
+	}
+
+	var reply AppendEntriesReply
+	rf.mu.Unlock()
+
+	ok := rf.peers[follower].Call("Raft.AppendEntries", &req, &reply)
+	if !ok {
+		return
+	}
 
 	rf.mu.Lock()
-	defer rf.mu.Unlock()
 
+	if rf.checkTerm(reply.Term) {
+		return
+	}
+
+	if reply.Success {
+		rf.nextIndex[follower]++
+		rf.matchIndex[follower] = req.PrevLogIndex + len(req.Entries)
+	} else {
+		rf.nextIndex[follower]--
+		rf.mu.Unlock()
+		goto Retry
+	}
+
+	rf.mu.Unlock()
+}
+
+func (rf *Raft) checkTermLocking(newTerm int) bool {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	return rf.checkTerm(newTerm)
+}
+
+func (rf *Raft) checkTerm(newTerm int) bool {
 	outdated := rf.currentTerm < newTerm
 	if outdated {
 		rf.currentTerm = newTerm
@@ -362,14 +457,15 @@ func (rf *Raft) lastLogTerm() int {
 	if len(rf.log) < 1 {
 		return 0
 	}
-	return rf.log[len(rf.log)-1].term
+	return rf.log[len(rf.log)-1].Term
 }
 
 func (rf *Raft) lastLogIndex() int {
 	if len(rf.log) < 1 {
 		return 0
 	}
-	return rf.log[len(rf.log)-1].index
+	// return rf.log[len(rf.log)-1].index
+	return len(rf.log)
 }
 
 func (rf *Raft) setCurrentState(s State) {
@@ -426,11 +522,22 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 // term. the third return value is true if this server believes it is
 // the leader.
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
-	index := -1
-	term := -1
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	if rf.currState != Leader {
+		return -1, -1, false
+	}
+
+	rf.log = append(rf.log, LogEntry{Command: command, Term: rf.currentTerm})
+
+	index := rf.lastLogIndex()
+	term := rf.currentTerm
 	isLeader := true
 
-	// Your code here (2B).
+	for i := range rf.peers {
+		go rf.updateFollower(i)
+	}
 
 	return index, term, isLeader
 }
@@ -489,7 +596,8 @@ func Make(peers []*labrpc.ClientEnd, me int,
 		nextTimeout:     time.Now().Add(timeout),
 		commitIndex:     0,
 		lastApplied:     0,
-
+		nextIndex:       make([]int, len(peers)),
+		matchIndex:      make([]int, len(peers)),
 		stopLeaderTasks: make(chan struct{}),
 	}
 
