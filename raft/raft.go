@@ -2,8 +2,10 @@ package raft
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"math/rand"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -56,7 +58,6 @@ type ApplyMsg struct {
 type LogEntry struct {
 	Command interface{}
 	Term    int
-	// index   int
 }
 
 // State is used to represent the current state of the node
@@ -80,7 +81,7 @@ type Raft struct {
 	persister *Persister          // Object to hold this peer's persisted state
 	me        int                 // this peer's index into peers[]
 	dead      int32               // set by Kill()
-
+	applyChan chan ApplyMsg
 	// Your data here (2A, 2B, 2C).
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
@@ -153,7 +154,7 @@ type AppendEntriesArgs struct {
 	LeaderID     int
 	PrevLogIndex int
 	PrevLogTerm  int
-	Entries      []interface{}
+	Entries      []LogEntry
 	LeaderCommit int
 }
 
@@ -183,26 +184,26 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		return
 	}
 
-	logMatches := (args.PrevLogIndex == 0 && args.PrevLogTerm == 0) ||
-		rf.log[args.PrevLogIndex-1].Term == args.PrevLogTerm
-
-	if !logMatches {
+	if rf.lastLogIndex() < args.PrevLogIndex || rf.logTermAtIndex(args.PrevLogIndex) != args.PrevLogTerm {
 		reply.Success = false
 		return
 	}
 
-	for i := args.PrevLogIndex; i < len(rf.log); i++ {
-		if rf.log[i].Term != args.Term {
-			rf.log = rf.log[:i]
+	for i, e := range args.Entries {
+		if args.PrevLogIndex+1+i > rf.lastLogIndex() {
+			break
+		}
+		if rf.logTermAtIndex(args.PrevLogIndex+1+i) != e.Term {
+			rf.log = rf.log[:args.PrevLogIndex+i]
 			break
 		}
 	}
 
-	for i, c := range args.Entries {
-		if i+args.PrevLogIndex < len(rf.log) {
-			rf.log[i+args.PrevLogIndex].Command = c
+	for i, e := range args.Entries {
+		if args.PrevLogIndex+i < len(rf.log) {
+			rf.log[i+args.PrevLogIndex] = e
 		} else {
-			rf.log = append(rf.log, LogEntry{Command: c, Term: args.Term})
+			rf.log = append(rf.log, e)
 		}
 	}
 
@@ -211,6 +212,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	}
 
 	rf.nextTimeout = rf.nextTimeout.Add(rf.electionTimeout)
+	reply.Success = true
 }
 
 // RequestVoteArgs - example RequestVote RPC arguments structure.
@@ -237,9 +239,9 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.checkTerm(args.Term)
 
 	termInvalid := args.Term < rf.currentTerm
-	logInvalid := args.LastLogIndex < rf.lastLogIndex() || args.LastLogTerm < rf.lastLogTerm()
+	candidateLogAsRecent := args.LastLogTerm > rf.lastLogTerm() || (args.LastLogTerm == rf.lastLogTerm() && args.LastLogIndex >= rf.lastLogTerm())
 	alreadyVoted := rf.votedFor != -1 && rf.votedFor != args.CandidateID
-	if termInvalid || logInvalid || alreadyVoted {
+	if termInvalid || !candidateLogAsRecent || alreadyVoted {
 		reply.CurrTerm = rf.currentTerm
 		reply.VoteGranted = false
 		return
@@ -351,6 +353,53 @@ func (rf *Raft) becomeLeader() {
 	rf.mu.Unlock()
 
 	rf.startHeartbeats()
+
+	go rf.increaseCommitIndex()
+}
+
+func (rf *Raft) increaseCommitIndex() {
+	for {
+		if rf.killed() {
+			return
+		}
+
+		select {
+		case <-rf.stopLeaderTasks:
+			return
+		default:
+			rf.mu.Lock()
+			currIndices := make([]int, len(rf.peers))
+			copy(currIndices, rf.matchIndex)
+			sort.Ints(currIndices)
+
+			possIndex := currIndices[(len(rf.peers)/2)-1]
+			if possIndex > rf.commitIndex && rf.logTermAtIndex(possIndex) == rf.currentTerm {
+				rf.commitIndex = possIndex
+			}
+			rf.mu.Unlock()
+
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+}
+
+func (rf *Raft) applyMessages() {
+	for {
+		if rf.killed() {
+			return
+		}
+
+		rf.mu.Lock()
+		if rf.commitIndex > rf.lastApplied {
+			for i := rf.lastApplied + 1; i <= rf.commitIndex; i++ {
+				rf.applyChan <- ApplyMsg{CommandValid: true, Command: rf.log[i-1].Command, CommandIndex: i}
+			}
+			rf.lastApplied = rf.commitIndex
+		}
+		rf.mu.Unlock()
+
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 func (rf *Raft) startHeartbeats() {
@@ -358,8 +407,8 @@ func (rf *Raft) startHeartbeats() {
 	args := &AppendEntriesArgs{
 		Term:         rf.currentTerm,
 		LeaderID:     rf.me,
-		PrevLogTerm:  rf.lastLogTerm(),
-		PrevLogIndex: rf.lastLogIndex(),
+		PrevLogTerm:  0,
+		PrevLogIndex: 0,
 	}
 	rf.mu.Unlock()
 
@@ -395,24 +444,19 @@ func (rf *Raft) updateFollower(follower int) {
 Retry:
 	rf.mu.Lock()
 
-	next := rf.nextIndex[follower]
-	var prevLogTerm int
-	if next == 1 {
-		prevLogTerm = 0
-	} else {
-		prevLogTerm = rf.log[next-1].Term
-	}
+	nextIndex := rf.nextIndex[follower]
+	prevLogTerm := rf.logTermAtIndex(nextIndex - 1)
 
 	req := AppendEntriesArgs{
 		Term:         rf.currentTerm,
 		LeaderID:     rf.me,
-		PrevLogIndex: next - 1,
+		PrevLogIndex: nextIndex - 1,
 		PrevLogTerm:  prevLogTerm,
 		LeaderCommit: rf.commitIndex,
 	}
 
-	for i := next; i < len(rf.log); i++ {
-		req.Entries = append(req.Entries, rf.log[i-1].Command)
+	for i := nextIndex; i <= len(rf.log); i++ {
+		req.Entries = append(req.Entries, LogEntry{Command: rf.log[i-1].Command, Term: rf.logTermAtIndex(i)})
 	}
 
 	var reply AppendEntriesReply
@@ -432,13 +476,12 @@ Retry:
 	if reply.Success {
 		rf.nextIndex[follower]++
 		rf.matchIndex[follower] = req.PrevLogIndex + len(req.Entries)
+		rf.mu.Unlock()
 	} else {
 		rf.nextIndex[follower]--
 		rf.mu.Unlock()
 		goto Retry
 	}
-
-	rf.mu.Unlock()
 }
 
 func (rf *Raft) checkTermLocking(newTerm int) bool {
@@ -468,19 +511,18 @@ func (rf *Raft) lastLogTerm() int {
 	return rf.log[len(rf.log)-1].Term
 }
 
-func (rf *Raft) lastLogIndex() int {
-	if len(rf.log) < 1 {
+func (rf *Raft) logTermAtIndex(index int) int {
+	if index < 0 {
+		panic(fmt.Sprintf("Called 'logTermAtIndex' with index %d < 0\n", index))
+	} else if index == 0 {
 		return 0
+	} else {
+		return rf.log[index-1].Term
 	}
-	// return rf.log[len(rf.log)-1].index
-	return len(rf.log)
 }
 
-func (rf *Raft) setCurrentState(s State) {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-
-	rf.currState = s
+func (rf *Raft) lastLogIndex() int {
+	return len(rf.log)
 }
 
 //
