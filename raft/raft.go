@@ -183,7 +183,9 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		return
 	}
 
-	logMatches := rf.log[args.PrevLogIndex-1].Term == args.PrevLogTerm
+	logMatches := (args.PrevLogIndex == 0 && args.PrevLogTerm == 0) ||
+		rf.log[args.PrevLogIndex-1].Term == args.PrevLogTerm
+
 	if !logMatches {
 		reply.Success = false
 		return
@@ -394,12 +396,18 @@ Retry:
 	rf.mu.Lock()
 
 	next := rf.nextIndex[follower]
+	var prevLogTerm int
+	if next == 1 {
+		prevLogTerm = 0
+	} else {
+		prevLogTerm = rf.log[next-1].Term
+	}
 
 	req := AppendEntriesArgs{
 		Term:         rf.currentTerm,
 		LeaderID:     rf.me,
 		PrevLogIndex: next - 1,
-		PrevLogTerm:  rf.log[next-1].Term,
+		PrevLogTerm:  prevLogTerm,
 		LeaderCommit: rf.commitIndex,
 	}
 
