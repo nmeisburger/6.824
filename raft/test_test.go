@@ -375,6 +375,8 @@ func TestRejoin2B(t *testing.T) {
 
 	// all together now
 	cfg.connect(leader2)
+	DPrintf("-------- NODE 1 RECONNECTED --------")
+	time.Sleep(1500 * time.Millisecond)
 
 	cfg.one(105, servers, true)
 

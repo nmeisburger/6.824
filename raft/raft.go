@@ -213,7 +213,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 			break
 		}
 		if rf.logTermAtIndex(args.PrevLogIndex+1+i) != e.Term {
-			rf.log = rf.log[:args.PrevLogIndex+i]
+			rf.log = rf.log[:args.PrevLogIndex+i+1]
 			break
 		}
 	}
@@ -227,7 +227,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	}
 
 	if rf.commitIndex < args.LeaderCommit {
-		rf.commitIndex = min(args.LeaderCommit, len(rf.log))
+		rf.commitIndex = min(args.LeaderCommit, rf.lastLogIndex())
 	}
 
 	rf.nextTimeout = rf.nextTimeout.Add(rf.electionTimeout)
@@ -291,9 +291,10 @@ func (rf *Raft) monitorElectionTimeout() {
 
 		rf.mu.Lock()
 		timeout := rf.nextTimeout
+		notLeader := rf.currState != Leader
 		rf.mu.Unlock()
 
-		if time.Now().After(timeout) {
+		if time.Now().After(timeout) && notLeader {
 			go rf.startElection()
 
 			rf.mu.Lock()
@@ -423,6 +424,7 @@ func (rf *Raft) applyMessages() {
 			rf.lastApplied++
 			msg := ApplyMsg{CommandValid: true, Command: rf.log[rf.lastApplied].Command, CommandIndex: rf.lastApplied}
 			rf.mu.Unlock()
+			DPrintf("Node %d: LOG: \n\n %v\n\n", rf.me, rf.log)
 			DPrintf("Node %d: applying: %v at %d", rf.me, msg.Command, msg.CommandIndex)
 			rf.applyChan <- msg
 		}
@@ -433,9 +435,6 @@ func (rf *Raft) applyMessages() {
 func (rf *Raft) startHeartbeats() {
 	for i := range rf.peers {
 		follower := i
-		// if follower == rf.me {
-		// 	continue
-		// }
 		go func() {
 			for {
 				if rf.killed() || rf.leaderStopped() {
