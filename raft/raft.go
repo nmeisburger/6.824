@@ -32,8 +32,8 @@ import (
 //   in the same server.
 //
 
-const heartbeatDelay time.Duration = time.Second
-const minElectionTimeout time.Duration = 3 * time.Second
+const heartbeatDelay time.Duration = 1000 * time.Millisecond
+const minElectionTimeout time.Duration = 2 * time.Second
 
 // ApplyMsg -
 // as each Raft peer becomes aware that successive log entries are
@@ -414,8 +414,8 @@ func (rf *Raft) startHeartbeats() {
 					return
 				}
 
-				rf.callAppendEntries(follower, true)
-				DPrintf("Node %d: sent heartbeat to %d", rf.me, follower)
+				DPrintf("Node %d: sending heartbeat to %d...", rf.me, follower)
+				go rf.callAppendEntries(follower, true)
 				time.Sleep(heartbeatDelay)
 			}
 		}()

@@ -73,6 +73,7 @@ func TestReElection2A(t *testing.T) {
 
 	// if there's no quorum, no leader should
 	// be elected.
+	time.Sleep(1500 * time.Millisecond) // Hack to make sure that the old leader gets a heartbeat before the new nodes disconnect
 	cfg.disconnect(leader2)
 	cfg.disconnect((leader2 + 1) % servers)
 	time.Sleep(2 * RaftElectionTimeout)
