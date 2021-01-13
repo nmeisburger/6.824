@@ -10,7 +10,6 @@ package raft
 
 import (
 	"fmt"
-	"log"
 	"math/rand"
 	"sync"
 	"sync/atomic"
@@ -64,27 +63,33 @@ func TestReElection2A(t *testing.T) {
 
 	// if the leader disconnects, a new one should be elected.
 	cfg.disconnect(leader1)
+	DPrintf("\n#### LEADER 1 DISCONNECTED\n")
 	cfg.checkOneLeader()
 
 	// if the old leader rejoins, that shouldn't
 	// disturb the new leader.
 	cfg.connect(leader1)
+	DPrintf("\n#### LEADER 1 RECONNECTED\n")
 	leader2 := cfg.checkOneLeader()
 
 	// if there's no quorum, no leader should
 	// be elected.
-	time.Sleep(1500 * time.Millisecond) // Hack to make sure that the old leader gets a heartbeat before the new nodes disconnect
+	time.Sleep(2000 * time.Millisecond) // Hack to make sure that the old leader gets a heartbeat before the new nodes disconnect
 	cfg.disconnect(leader2)
+	DPrintf("\n#### LEADER 2 DISCONNECTED\n")
 	cfg.disconnect((leader2 + 1) % servers)
+	DPrintf("\n#### FOLLOWER DISCONNECTED\n")
 	time.Sleep(2 * RaftElectionTimeout)
 	cfg.checkNoLeader()
 
 	// if a quorum arises, it should elect a leader.
 	cfg.connect((leader2 + 1) % servers)
+	DPrintf("\n#### FOLLOWER RECONNECTED\n")
 	cfg.checkOneLeader()
 
 	// re-join of last node shouldn't prevent leader from existing.
 	cfg.connect(leader2)
+	DPrintf("\n#### LEADER 2 RECONNECTED\n")
 	cfg.checkOneLeader()
 
 	cfg.end()
@@ -346,6 +351,7 @@ func TestRejoin2B(t *testing.T) {
 	// leader network failure
 	leader1 := cfg.checkOneLeader()
 	cfg.disconnect(leader1)
+	DPrintf("-------- NODE 0 DISCONNECTED --------")
 
 	// make old leader try to agree on some entries
 	cfg.rafts[leader1].Start(102)
@@ -358,10 +364,12 @@ func TestRejoin2B(t *testing.T) {
 	// new leader network failure
 	leader2 := cfg.checkOneLeader()
 	cfg.disconnect(leader2)
+	DPrintf("-------- NODE 1 DISCONNECTED --------")
 
 	// old leader connected again
 	cfg.connect(leader1)
-	log.Println("Leader 1 rejoined")
+	DPrintf("-------- NODE 0 RECONNECTED --------")
+	time.Sleep(1500 * time.Millisecond)
 
 	cfg.one(104, 2, true)
 
