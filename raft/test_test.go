@@ -165,6 +165,7 @@ func TestFailAgree2B(t *testing.T) {
 	// disconnect one follower from the network.
 	leader := cfg.checkOneLeader()
 	cfg.disconnect((leader + 1) % servers)
+	DPrintf("******** NODE DISCONNECTED ********")
 
 	// the leader and remaining follower should be
 	// able to agree despite the disconnected follower.
@@ -176,6 +177,7 @@ func TestFailAgree2B(t *testing.T) {
 
 	// re-connect
 	cfg.connect((leader + 1) % servers)
+	DPrintf("******** NODE RECONNECTED ********")
 
 	// the full set of servers should preserve
 	// previous agreements, and be able to agree
@@ -397,6 +399,7 @@ func TestBackup2B(t *testing.T) {
 	cfg.disconnect((leader1 + 2) % servers)
 	cfg.disconnect((leader1 + 3) % servers)
 	cfg.disconnect((leader1 + 4) % servers)
+	DPrintf("******** FOLLOWERS DISCONNECTED ********")
 
 	// submit lots of commands that won't commit
 	for i := 0; i < 50; i++ {
@@ -407,16 +410,19 @@ func TestBackup2B(t *testing.T) {
 
 	cfg.disconnect((leader1 + 0) % servers)
 	cfg.disconnect((leader1 + 1) % servers)
+	DPrintf("******** LEADER + LAST FOLLOWER DISCONNECTED ********")
 
 	// allow other partition to recover
 	cfg.connect((leader1 + 2) % servers)
 	cfg.connect((leader1 + 3) % servers)
 	cfg.connect((leader1 + 4) % servers)
+	DPrintf("******** FOLLOWERS RECONNECTED ********")
 
 	// lots of successful commands to new group.
 	for i := 0; i < 50; i++ {
 		cfg.one(rand.Int(), 3, true)
 	}
+	DPrintf("******** SUCCESSFUL COMMANDS DONE ********")
 
 	// now another partitioned leader and one follower
 	leader2 := cfg.checkOneLeader()
@@ -425,11 +431,13 @@ func TestBackup2B(t *testing.T) {
 		other = (leader2 + 1) % servers
 	}
 	cfg.disconnect(other)
+	DPrintf("******** OTHER FOLLOWER DISCONNECTED ********")
 
 	// lots more commands that won't commit
 	for i := 0; i < 50; i++ {
 		cfg.rafts[leader2].Start(rand.Int())
 	}
+	DPrintf("******** FAILED COMMANDS DONE ********")
 
 	time.Sleep(RaftElectionTimeout / 2)
 
@@ -437,14 +445,27 @@ func TestBackup2B(t *testing.T) {
 	for i := 0; i < servers; i++ {
 		cfg.disconnect(i)
 	}
+	DPrintf("******** ALL DISCONNECTED ********")
+
 	cfg.connect((leader1 + 0) % servers)
 	cfg.connect((leader1 + 1) % servers)
 	cfg.connect(other)
+	DPrintf("******** ORIGINAL LEADER RECONNECTED ********")
+	time.Sleep(1500 * time.Millisecond)
+
+	x, y := cfg.rafts[(leader1+0)%servers].GetState()
+	DPrintf("### %v, %v", x, y)
+	x, y = cfg.rafts[(leader1+1)%servers].GetState()
+	DPrintf("### %v, %v", x, y)
+	x, y = cfg.rafts[other].GetState()
+	DPrintf("### %v, %v", x, y)
 
 	// lots of successful commands to new group.
 	for i := 0; i < 50; i++ {
 		cfg.one(rand.Int(), 3, true)
 	}
+
+	DPrintf("******** SUCCESSFUL COMMANDS DONE AGAIN ********")
 
 	// now everyone
 	for i := 0; i < servers; i++ {

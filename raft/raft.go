@@ -230,7 +230,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.commitIndex = min(args.LeaderCommit, rf.lastLogIndex())
 	}
 
-	rf.nextTimeout = rf.nextTimeout.Add(rf.electionTimeout)
+	rf.nextTimeout = time.Now().Add(rf.electionTimeout)
 	reply.Success = true
 }
 
@@ -268,13 +268,13 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.checkTerm(args.Term)
 
 	termInvalid := args.Term < rf.currentTerm
-	candidateLogAsRecent := args.LastLogTerm > rf.lastLogTerm() || (args.LastLogTerm == rf.lastLogTerm() && args.LastLogIndex >= rf.lastLogTerm())
+	candidateLogAsRecent := args.LastLogTerm > rf.lastLogTerm() || (args.LastLogTerm == rf.lastLogTerm() && args.LastLogIndex >= rf.lastLogIndex())
 
-	DPrintf("Node %d: %v", rf.me, args)
+	DPrintf("Node %d: %v, LLT: %d, LLI: %d", rf.me, args, rf.lastLogTerm(), rf.lastLogIndex())
+	reply.CurrTerm = rf.currentTerm
 
 	alreadyVoted := rf.votedFor != -1 && rf.votedFor != args.CandidateID
 	if termInvalid || !candidateLogAsRecent || alreadyVoted {
-		reply.CurrTerm = rf.currentTerm
 		reply.VoteGranted = false
 		return
 	}
