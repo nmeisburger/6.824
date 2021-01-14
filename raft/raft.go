@@ -284,10 +284,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 }
 
 func (rf *Raft) monitorElectionTimeout() {
-	for {
-		if rf.killed() {
-			return
-		}
+	for !rf.killed() {
 
 		rf.mu.Lock()
 		timeout := rf.nextTimeout
@@ -392,11 +389,7 @@ func (rf *Raft) becomeLeader() {
 }
 
 func (rf *Raft) increaseCommitIndex() {
-	for {
-		if rf.killed() || rf.leaderStopped() {
-			return
-		}
-
+	for !rf.killed() && !rf.leaderStopped() {
 		rf.mu.Lock()
 		currIndices := make([]int, len(rf.peers))
 		copy(currIndices, rf.matchIndex)
@@ -415,10 +408,7 @@ func (rf *Raft) increaseCommitIndex() {
 
 func (rf *Raft) applyMessages() {
 
-	for {
-		if rf.killed() {
-			return
-		}
+	for !rf.killed() {
 		if rf.commitIndex > rf.lastApplied {
 			rf.mu.Lock()
 			rf.lastApplied++
@@ -436,11 +426,7 @@ func (rf *Raft) startHeartbeats() {
 	for i := range rf.peers {
 		follower := i
 		go func() {
-			for {
-				if rf.killed() || rf.leaderStopped() {
-					return
-				}
-
+			for !rf.killed() && !rf.leaderStopped() {
 				go rf.callAppendEntries(follower, true)
 				time.Sleep(heartbeatDelay)
 			}
