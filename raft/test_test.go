@@ -476,6 +476,23 @@ func TestBackup2B(t *testing.T) {
 	cfg.end()
 }
 
+func TestBenchmark(t *testing.T) {
+	servers := 5
+	cfg := makeConfig(t, servers, false)
+	defer cfg.cleanup()
+
+	cfg.begin("Test: speed benchmark")
+
+	cfg.checkOneLeader()
+
+	// lots of successful commands to new group.
+	for i := 0; i < 50; i++ {
+		cfg.one(rand.Int(), servers, true)
+	}
+
+	cfg.end()
+}
+
 func TestCount2B(t *testing.T) {
 	servers := 3
 	cfg := makeConfig(t, servers, false)

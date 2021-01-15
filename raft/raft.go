@@ -423,15 +423,14 @@ func (rf *Raft) applyMessages() {
 }
 
 func (rf *Raft) startHeartbeats() {
-	for i := range rf.peers {
-		follower := i
-		go func() {
-			for !rf.killed() && !rf.leaderStopped() {
+	go func() {
+		for !rf.killed() && !rf.leaderStopped() {
+			for follower := range rf.peers {
 				go rf.callAppendEntries(follower, true)
-				time.Sleep(heartbeatDelay)
 			}
-		}()
-	}
+			time.Sleep(heartbeatDelay)
+		}
+	}()
 }
 
 func (rf *Raft) callAppendEntries(follower int, heartbeat bool) bool {
