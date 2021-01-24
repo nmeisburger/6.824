@@ -1,13 +1,16 @@
 package raft
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"log"
 	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"6.824/labgob"
 	labrpc "6.824/labrpc"
 )
 
@@ -127,6 +130,15 @@ func (rf *Raft) persist() {
 	// e.Encode(rf.yyy)
 	// data := w.Bytes()
 	// rf.persister.SaveRaftState(data)
+
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+
+	e.Encode(rf.currentTerm)
+	e.Encode(rf.votedFor)
+	e.Encode(rf.log)
+
+	rf.persister.SaveRaftState(w.Bytes())
 }
 
 //
@@ -149,6 +161,29 @@ func (rf *Raft) readPersist(data []byte) {
 	//   rf.xxx = xxx
 	//   rf.yyy = yyy
 	// }
+
+	r := bytes.NewBuffer(data)
+	d := labgob.NewDecoder(r)
+
+	var term, votedFor int
+
+	if err := d.Decode(&term); err != nil {
+		log.Fatal("Decode term failed: ", err)
+	}
+	if err := d.Decode(&votedFor); err != nil {
+		log.Fatal("Decode votedFor failed: ", err)
+	}
+
+	rf.currentTerm = term
+	rf.votedFor = votedFor
+
+	logEntries := make([]LogEntry, 0, 0)
+
+	if err := d.Decode(logEntries); err != nil {
+		log.Fatal("Decode log entries failed: ", err)
+	}
+
+	rf.log = logEntries
 }
 
 // AppendEntriesArgs is the arguments for the append entries RPC
@@ -368,8 +403,6 @@ WaitForVotes:
 			if received >= len(rf.peers) || votes > majority {
 				break WaitForVotes
 			}
-		default:
-			time.Sleep(10 * time.Millisecond)
 		}
 	}
 	cancel()
@@ -393,37 +426,30 @@ func (rf *Raft) becomeLeader() {
 
 	rf.mu.Unlock()
 
-	rf.startHeartbeats()
-
-	go rf.increaseCommitIndex()
+	go rf.heartbeats()
 }
 
-func (rf *Raft) increaseCommitIndex() {
-	for !rf.killed() && !rf.leaderStopped() {
-		rf.mu.Lock()
+func (rf *Raft) maybeUpdateLeaderCommitIndex() {
+	rf.mu.Lock()
 
-		currIndices := make([]int, len(rf.peers))
-		copy(currIndices, rf.matchIndex)
-		sort.Ints(currIndices)
+	currIndices := make([]int, len(rf.peers))
+	copy(currIndices, rf.matchIndex)
+	sort.Ints(currIndices)
 
-		possIndex := currIndices[(len(rf.peers) / 2)]
-		rf.applyCond.L.Lock()
-		needsUpdate := possIndex > rf.commitIndex && rf.logTermAtIndex(possIndex) == rf.currentTerm
+	possIndex := currIndices[(len(rf.peers) / 2)]
+	rf.applyCond.L.Lock()
+	needsUpdate := possIndex > rf.commitIndex && rf.logTermAtIndex(possIndex) == rf.currentTerm
 
-		rf.mu.Unlock()
+	rf.mu.Unlock()
 
-		if needsUpdate {
-			rf.commitIndex = possIndex
-			rf.applyCond.Signal()
-		}
-		rf.applyCond.L.Unlock()
-
-		time.Sleep(10 * time.Millisecond)
+	if needsUpdate {
+		rf.commitIndex = possIndex
+		rf.applyCond.Signal()
 	}
+	rf.applyCond.L.Unlock()
 }
 
 func (rf *Raft) applyMessages() {
-
 	for {
 		rf.applyCond.L.Lock()
 		for rf.commitIndex <= rf.lastApplied {
@@ -437,27 +463,14 @@ func (rf *Raft) applyMessages() {
 		msg := ApplyMsg{CommandValid: true, Command: rf.log[rf.lastApplied].Command, CommandIndex: rf.lastApplied}
 		rf.applyCond.L.Unlock()
 		rf.applyChan <- msg
-
-		// if rf.commitIndex > rf.lastApplied {
-		// 	rf.mu.Lock()
-		// 	rf.lastApplied++
-		// 	msg := ApplyMsg{CommandValid: true, Command: rf.log[rf.lastApplied].Command, CommandIndex: rf.lastApplied}
-		// 	rf.mu.Unlock()
-		// 	DPrintf("Node %d: LOG: \n\n %v\n\n", rf.me, rf.log)
-		// 	DPrintf("Node %d: applying: %v at %d", rf.me, msg.Command, msg.CommandIndex)
-		// 	rf.applyChan <- msg
-		// }
-		// time.Sleep(10 * time.Millisecond)
 	}
 }
 
-func (rf *Raft) startHeartbeats() {
-	go func() {
-		for !rf.killed() && !rf.leaderStopped() {
-			rf.parallelAppendEntries(true)
-			time.Sleep(heartbeatDelay)
-		}
-	}()
+func (rf *Raft) heartbeats() {
+	for !rf.killed() && !rf.leaderStopped() {
+		rf.parallelAppendEntries(true)
+		time.Sleep(heartbeatDelay)
+	}
 }
 
 func (rf *Raft) makeAppendEntriesRequest(follower int, heartbeat bool) *AppendEntriesArgs {
@@ -512,6 +525,8 @@ func (rf *Raft) parallelAppendEntries(heartbeat bool) {
 				rf.matchIndex[follower] = req.PrevLogIndex + len(req.Entries)
 				// Exit on success
 				rf.mu.Unlock()
+
+				rf.maybeUpdateLeaderCommitIndex()
 				return
 			}
 
@@ -544,19 +559,24 @@ func (rf *Raft) callAppendEntries(follower int, heartbeat bool) bool {
 	LPrintf(INFO, "Node %d: from %d: %v", rf.me, follower, reply.String())
 
 	rf.mu.Lock()
-	defer rf.mu.Unlock()
+	// defer rf.mu.Unlock()
 
 	if rf.checkTerm(reply.Term) {
+		rf.mu.Unlock()
 		return false
 	}
 
 	if reply.Success {
 		rf.nextIndex[follower] = req.PrevLogIndex + len(req.Entries) + 1
 		rf.matchIndex[follower] = req.PrevLogIndex + len(req.Entries)
+		rf.mu.Unlock()
 
+		rf.maybeUpdateLeaderCommitIndex()
 		return false
 	}
 	rf.nextIndex[follower]--
+
+	rf.mu.Unlock()
 	return true
 }
 
